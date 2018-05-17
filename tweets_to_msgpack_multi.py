@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
-import psycopg2
+import msgpack
 import shapely.geometry
 
 NLONG = "$numberLong"
 DEFAULT_COMMIT_INTERVAL = 5000
+SPLITS = 4
 
 def getitem_or_none(dict_, key):
     """ Attempt to get an item from a dict; if it does not exist, return None
@@ -31,10 +32,17 @@ class Importer(object):
                 automatically made after
         """
 
-        self.connection = psycopg2.connect("dbname = geotweets")
-        self.cursor = self.connection.cursor()
         self.n_imported = 0
         self.commit_interval = commit_interval
+        self.files = {}
+        for table in ["users", "places", "tweets"]:
+            for i in range(SPLITS):
+                split_name = "%s%d" % (table, i)
+                self.files[split_name] = open("%s.msgpack" % split_name, "wb")
+
+    def close(self):
+        for (key, file_) in self.files.items():
+            file_.close()
 
     def import_tweet(self, data):
         """ Import a tweet """
@@ -43,14 +51,7 @@ class Importer(object):
         place = data["place"]
         user_id  = convert_nlong(user["id"])
 
-        self.cursor.execute(
-            """INSERT INTO users
-                (id, name, screen_name, description, verified, geo_enabled,
-                statuses_count, followers_count, friends_count, time_zone,
-                lang, location)
-            VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT DO NOTHING""",
+        self.files["users%d" % (self.n_imported % SPLITS)].write(msgpack.packb(
             (
                 user_id,
                 user["name"],
@@ -65,16 +66,11 @@ class Importer(object):
                 user["lang"],
                 user["location"]
             )
-        )
+        ))
 
         if (place is not None):
             place_id = place["id"]
-            self.cursor.execute(
-                """INSERT INTO places
-                    (id, country, full_name, place_type, bounding_box)
-                VALUES
-                    (%s, %s, %s, %s, ST_SetSRID(%s::geometry, 4326))
-                ON CONFLICT DO NOTHING""",
+            self.files["places%d" % (self.n_imported % SPLITS)].write(msgpack.packb(
                 (
                     place["id"],
                     place["country"],
@@ -82,7 +78,7 @@ class Importer(object):
                     place["place_type"],
                     shapely.geometry.shape(place["bounding_box"]).wkb_hex
                 )
-            )
+            ))
         else:
             place_id = None
 
@@ -119,16 +115,7 @@ class Importer(object):
         else:
             mentioned_user_ids = None
 
-        self.cursor.execute(
-            """INSERT INTO tweets
-                (id, user_id, place_id, text, created_at, hashtags, urls,
-                media, lang, mentioned_user_ids, quoted_status_id,
-                in_reply_to_status_id, in_reply_to_user_id, coordinates)
-            VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                ST_SetSRID(%s::geometry, 4326)
-                )
-            ON CONFLICT DO NOTHING""",
+        self.files["tweets%d" % (self.n_imported % SPLITS)].write(msgpack.packb(
             (
                 convert_nlong(data["id"]),
                 user_id,
@@ -145,11 +132,9 @@ class Importer(object):
                 convert_nlong(getitem_or_none(data, "in_reply_to_user_id")),
                 shapely.geometry.shape(data["coordinates"]).wkb_hex
             )
-        )
+        ))
 
         self.n_imported += 1
-        #if (self.n_imported % self.commit_interval):
-        #    self.connection.commit()
 
 if (__name__ == "__main__"):
     import json
@@ -169,4 +154,4 @@ if (__name__ == "__main__"):
             sys.stdout.flush()
 
     print("")
-    importer.connection.commit()
+    importer.close()
