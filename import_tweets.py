@@ -4,7 +4,8 @@ import psycopg2
 import shapely.geometry
 
 NLONG = "$numberLong"
-DEFAULT_COMMIT_INTERVAL = 5000
+DEFAULT_COMMIT_INTERVAL = 10000
+DEFAULT_DB = "bari"
 
 def getitem_or_none(dict_, key):
     """ Attempt to get an item from a dict; if it does not exist, return None
@@ -23,7 +24,7 @@ def convert_nlong(nlong):
 
 class Importer(object):
 
-    def __init__(self, commit_interval = DEFAULT_COMMIT_INTERVAL):
+    def __init__(self, db = DEFAULT_DB, commit_interval = DEFAULT_COMMIT_INTERVAL):
         """ Initialize Importer object
 
         Args:
@@ -31,10 +32,8 @@ class Importer(object):
                 automatically made after
         """
 
-        self.connection = psycopg2.connect("dbname = geotweets")
+        self.connection = psycopg2.connect("dbname = %s" % db)
         self.cursor = self.connection.cursor()
-        self.n_imported = 0
-        self.commit_interval = commit_interval
 
     def import_tweet(self, data):
         """ Import a tweet """
@@ -44,7 +43,7 @@ class Importer(object):
         user_id  = convert_nlong(user["id"])
 
         self.cursor.execute(
-            """INSERT INTO users
+            """INSERT INTO geotweets_users
                 (id, name, screen_name, description, verified, geo_enabled,
                 statuses_count, followers_count, friends_count, time_zone,
                 lang, location)
@@ -70,7 +69,7 @@ class Importer(object):
         if (place is not None):
             place_id = place["id"]
             self.cursor.execute(
-                """INSERT INTO places
+                """INSERT INTO geotweets_places
                     (id, country, full_name, place_type, bounding_box)
                 VALUES
                     (%s, %s, %s, %s, ST_SetSRID(%s::geometry, 4326))
@@ -120,7 +119,7 @@ class Importer(object):
             mentioned_user_ids = None
 
         self.cursor.execute(
-            """INSERT INTO tweets
+            """INSERT INTO geotweets
                 (id, user_id, place_id, text, created_at, hashtags, urls,
                 media, lang, mentioned_user_ids, quoted_status_id,
                 in_reply_to_status_id, in_reply_to_user_id, coordinates)
@@ -147,26 +146,31 @@ class Importer(object):
             )
         )
 
-        self.n_imported += 1
-        #if (self.n_imported % self.commit_interval):
-        #    self.connection.commit()
-
 if (__name__ == "__main__"):
+    import argparse
+    import datetime
+    import gzip
     import json
-    import sys
+    import tqdm
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("inputs", nargs = "+")
+    args = parser.parse_args()
 
     importer = Importer()
-    error_file = "%s_errors.json" % sys.argv[1]
 
-    with open(sys.argv[1], "r") as f, open(error_file, "w") as f_errors:
-        for line in f:
-            try:
-                importer.import_tweet(json.loads(line))
-            except Exception as error:
-                print(error)
-                f_errors.write(line)
-            sys.stdout.write("\rimported %d tweets" % importer.n_imported)
-            sys.stdout.flush()
+    error_file = "geotweets_sql_errors_%s.json.gz" % datetime.datetime.now().isoformat()
+    n_errors = 0
 
-    print("")
-    importer.connection.commit()
+    for input_file in tqdm.tqdm(args.inputs, desc = "files imported", position = 0):
+        with gzip.open(input_file, "r") as f, gzip.open(error_file, "w") as f_errors:
+            for line in tqdm.tqdm(f, position = 1):
+                try:
+                    importer.import_tweet(json.loads(line))
+                except Exception as error:
+                    n_errors += 1
+                    f_errors.write(line)
+        importer.connection.commit()
+
+    if (n_errors > 0):
+        print("%d errors (check %s)" % (n_errors, error_file))

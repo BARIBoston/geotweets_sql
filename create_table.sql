@@ -1,8 +1,8 @@
-DROP TABLE IF EXISTS tweets;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS places;
+DROP TABLE IF EXISTS geotweets;
+DROP TABLE IF EXISTS geotweets_users;
+DROP TABLE IF EXISTS geotweets_places;
 
-CREATE TABLE users(
+CREATE TABLE geotweets_users(
 	id BIGINT PRIMARY KEY,
 	name VARCHAR,
 	screen_name VARCHAR,
@@ -17,18 +17,18 @@ CREATE TABLE users(
 	location VARCHAR
 );
 
-CREATE TABLE places(
+CREATE TABLE geotweets_places(
 	id VARCHAR PRIMARY KEY,
 	country VARCHAR,
 	full_name VARCHAR,
 	place_type VARCHAR
 );
-ALTER TABLE places ADD COLUMN bounding_box geometry(Polygon, 4326);
+ALTER TABLE geotweets_places ADD COLUMN bounding_box geometry(Polygon, 4326);
 
-CREATE TABLE tweets(
+CREATE TABLE geotweets(
 	id BIGINT PRIMARY KEY,
-	user_id BIGINT REFERENCES users(id),
-	place_id VARCHAR REFERENCES places(id),
+	user_id BIGINT REFERENCES geotweets_users(id),
+	place_id VARCHAR REFERENCES geotweets_places(id),
 	text VARCHAR,
 	created_at TIMESTAMP,
 	hashtags VARCHAR[],
@@ -40,4 +40,4 @@ CREATE TABLE tweets(
 	in_reply_to_status_id VARCHAR,
 	in_reply_to_user_id BIGINT
 );
-ALTER TABLE tweets ADD COLUMN coordinates geometry(Point, 4326);
+ALTER TABLE geotweets ADD COLUMN coordinates geometry(Point, 4326);
